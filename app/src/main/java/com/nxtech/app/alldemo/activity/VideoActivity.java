@@ -23,6 +23,7 @@ import com.nxtech.app.alldemo.adapter.TrimVideoAdapter;
 import com.nxtech.app.alldemo.bean.MediaBean;
 import com.nxtech.app.alldemo.bean.VideoEditInfo;
 import com.nxtech.app.alldemo.ui.RangeSeekBar;
+import com.nxtech.app.alldemo.ui.VideoThumbSpacingItemDecoration;
 import com.nxtech.app.alldemo.utils.ExtractFrameWorkThread;
 import com.nxtech.app.alldemo.utils.TimeUtil;
 import com.nxtech.app.alldemo.utils.UIUtils;
@@ -50,10 +51,10 @@ public class VideoActivity extends AppCompatActivity implements View.OnClickList
     private long videoDur;
     private EpVideo epVideo;
     private long startPos;
-    private long endPos;
+    private long scrollPos;
 
+    private float averageMsPx;//每毫秒所占的px
     private int mMaxWidth; //可裁剪区域的最大宽度
-//    private long MIN_CUT_DURATION = 10000L;// 最小剪辑时间3s
     private long MAX_CUT_DURATION = 1000L;//视频最多剪切多长时间
     private static final int MAX_COUNT_RANGE = 10;//seekBar的区域内一共有多少张图片
     private static final int MARGIN = UIUtils.dp2Px(56); //左右两边间距
@@ -118,7 +119,6 @@ public class VideoActivity extends AppCompatActivity implements View.OnClickList
 //        MIN_CUT_DURATION = duration;
         MAX_CUT_DURATION *= duration;
         startPos = 0;
-        endPos = startPos + duration;
 
         int num = getIntent().getIntExtra("path",0);
         if (num < videoKey.size()){
@@ -130,10 +130,9 @@ public class VideoActivity extends AppCompatActivity implements View.OnClickList
             mMaxWidth = UIUtils.getScreenWidth() - MARGIN * 2;
             editorRecycler.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
             videoEditAdapter = new TrimVideoAdapter(this, mMaxWidth / 10);
-
             initEdit();
-
             editorRecycler.setAdapter(videoEditAdapter);
+            editorRecycler.addOnScrollListener(scrollListener);
             videoView.setVideoPath(videoPath);
             videoView.start();
             handler.sendEmptyMessage(SIN_MSG_UPDATE);
@@ -152,20 +151,23 @@ public class VideoActivity extends AppCompatActivity implements View.OnClickList
         long startPosition = 0;
         long endPosition = videoDur;
         int thumbnailsCount;
+        int rangeWidth;
         if (endPosition <= MAX_CUT_DURATION){
             thumbnailsCount = MAX_COUNT_RANGE;
+            rangeWidth = mMaxWidth;
         }else{
             thumbnailsCount = (int) (endPosition * 1f /  1000f);
+            rangeWidth = mMaxWidth / MAX_COUNT_RANGE * thumbnailsCount;
         }
-
+        Log.d("TAG", "initEdit: "+rangeWidth);
+        editorRecycler.addItemDecoration(new VideoThumbSpacingItemDecoration(MARGIN, thumbnailsCount));
         seekBar = new RangeSeekBar(this, 0L, MAX_CUT_DURATION);
         seekBar.setSelectedMinValue(0L);
         seekBar.setSelectedMaxValue(MAX_CUT_DURATION);
-
         seekBar.setMin_cut_time(MAX_CUT_DURATION);//设置最小裁剪时间
         seekBar.setNotifyWhileDragging(true);
-//        seekBar.setOnRangeSeekBarChangeListener(mOnRangeSeekBarChangeListener);
         seekLayout.addView(seekBar);
+        averageMsPx = videoDur * 1.0f / rangeWidth * 1.0f;
 
         mExtractFrameWorkThread = new ExtractFrameWorkThread(extractW, extractH, handler, videoPath, OutPutFileDirPath, startPosition, endPosition, thumbnailsCount);
         mExtractFrameWorkThread.start();
@@ -186,7 +188,7 @@ public class VideoActivity extends AppCompatActivity implements View.OnClickList
                 break;
             case R.id.edit_out:
                 Log.d("TAG", "onClick: 剪辑视频");
-                Log.d("TAG", "onClick: "+startPos+" "+endPos);
+                Log.d("TAG", "onClick: "+startPos);
                 videoView.pause();
 //                epVideo.clip(startPos,endPos);
 //                EpEditor.exec(epVideo, outputOption, new OnEditorListener() {
@@ -221,6 +223,49 @@ public class VideoActivity extends AppCompatActivity implements View.OnClickList
         Log.d("TAG", "onCompletion: 播放完毕");
     }
 
+    private RecyclerView.OnScrollListener scrollListener = new RecyclerView.OnScrollListener() {
+        @Override
+        public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
+            super.onScrollStateChanged(recyclerView, newState);
+            if (newState == RecyclerView.SCROLL_STATE_IDLE){
+                //停止滚动
+                Log.d("TAG", "onScrollStateChanged: "+seekBar.getSelectedMinValue()+" "+scrollPos);
+            }else {
+                //正在滚动
+                videoView.pause();
+            }
+        }
+
+        @Override
+        public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
+            super.onScrolled(recyclerView, dx, dy);
+            int scrollX = getScrollXDistance();
+//            //达不到滑动的距离
+//            if (Math.abs(lastScrollX - scrollX) < mScaledTouchSlop) {
+//                isOverScaledTouchSlop = false;
+//                return;
+//            }
+            if (scrollX == -MARGIN) {
+                scrollPos = 0;
+            } else {
+                scrollPos = (long) (averageMsPx * (MARGIN + scrollX));
+            }
+            Log.d("TAG", "onScrolled: "+scrollPos);
+        }
+    };
+
+    /**
+     * 水平滑动了多少px
+     * @return int px
+     */
+    private int getScrollXDistance() {
+        LinearLayoutManager layoutManager = (LinearLayoutManager) editorRecycler.getLayoutManager();
+        int position = layoutManager.findFirstVisibleItemPosition();
+        View firstVisibleChildView = layoutManager.findViewByPosition(position);
+        int itemWidth = firstVisibleChildView.getWidth();
+        return (position) * itemWidth - firstVisibleChildView.getLeft();
+    }
+
     @Override
     protected void onDestroy() {
         if (mExtractFrameWorkThread != null) {
@@ -231,6 +276,5 @@ public class VideoActivity extends AppCompatActivity implements View.OnClickList
             Utils.deleteFile(new File(Utils.getSaveEditThumbnailDir(this)));
         }
         super.onDestroy();
-
     }
 }
